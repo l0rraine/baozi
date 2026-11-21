@@ -358,6 +358,11 @@ type application struct {
 	pinDragActive bool
 	pinDragX      float32
 	pinDragY      float32
+	// pinHandles/pinRects 记录本帧「已固定」卡片上一帧提交的矩形。自绘窗口拖动在
+	// MyGoSurface 上子类化，比 UI 先拿到鼠标，要按屏幕坐标反查固定卡，
+	// 避免把卡片拖动抢成窗口拖动。Element 跨帧会失效，所以用 Handle 读矩形。
+	pinHandles map[int]*ui.Handle
+	pinRects   []ui.Rect
 
 	// hoverPoint 是上一帧指针在窗口里的位置。悬停选中只在它**变了**的时候接管，
 	// 否则鼠标停在某张卡上不动、用户按方向键，选中会被 hover 每帧拽回去。
@@ -518,6 +523,37 @@ func (a *application) pinDragPoint(i int) *ui.Point {
 	return pt
 }
 
+// pinPressHit 判断窗口客户区坐标是否落在某张固定卡片里。
+//
+// 自绘拖动挂在 MyGoSurface 的子类化上，比 mygo 的 UI 先看到鼠标移动：
+// 只要它自己接管，固定卡的 Draggable 就再也收不到消息，表现就是拖卡片时
+// 整块面板跟着走。所以按下的那一点要先问这里，命中固定卡就把窗口拖动让开。
+func (a *application) pinPressHit(x, y float32) bool {
+	for _, b := range a.pinRects {
+		if b.W <= 0 || b.H <= 0 {
+			continue
+		}
+		if x >= b.X && x < b.X+b.W && y >= b.Y && y < b.Y+b.H {
+			return true
+		}
+	}
+	return false
+}
+
+// pinHandle 取某张固定卡片跨帧复用的 Handle：卡片每帧重建，
+// 但 Handle 能读到上一帧提交后的矩形。
+func (a *application) pinHandle(i int) *ui.Handle {
+	if a.pinHandles == nil {
+		a.pinHandles = map[int]*ui.Handle{}
+	}
+	h, ok := a.pinHandles[i]
+	if !ok {
+		h = &ui.Handle{}
+		a.pinHandles[i] = h
+	}
+	return h
+}
+
 // trackPinDrag 把这张卡片的拖动状态接起来：拖动中记录最新偏移，
 // 松手那一帧把偏移归零（否则卡片会粘在拖到的位置），并记下这次移动的意图。
 func (a *application) trackPinDrag(i int, el ui.Element) {
@@ -652,6 +688,9 @@ func (a *application) view(c *ui.Context) {
 	// 拖到哪、松手后位置记进配置（见 panelGeometryChanged），下次唤出照旧复现。
 	// 面板本来就没有标题栏（TitleBarHidden），没有这条就完全拿不动它。
 	body := func() {
+		// 固定卡矩形只在本帧有效：首页重建时重新收集，搜索/列表页则清空，
+		// 免得旧卡片的坐标把列表页上的按下误判成固定卡。
+		a.pinRects = a.pinRects[:0]
 		// 顶栏：放大镜 + 大字输入 + 正则开关 + 右端品牌胶囊（Pane 右上角那个 "Pane" 标）。
 		ui.Row(c).Padding(16, 20).Gap(14).AlignItems(ui.Center).Children(func() {
 			ui.Icon(c, searchIcon).FontSize(20).TextColor(t.TextMuted)
@@ -926,11 +965,16 @@ func (a *application) homeGrid(c *ui.Context) {
 					// 顶部对齐是硬要求：卡片高度由"名字一行还是两行"决定，
 					// 默认的居中会让名字短的卡片整体往下沉，于是图标顶不齐、
 					// 标题也不在同一行（用户就是拿这个截图来指正的）。
-					ui.Row(c).Gap(cardGap).AlignItems(ui.Start).Children(func() {
+					row := ui.Row(c).Gap(cardGap).AlignItems(ui.Start).Children(func() {
 						for i := start; i < end; i++ {
 							a.card(c, i)
 						}
 					})
+					// 拖动中的卡片要压住别的行：跨行拖的时候，后面的行是按
+					// 文档顺序画的，不把整行提到前面，被拖的卡片会被它们盖住。
+					if a.pinDragActive && a.pinDragFrom >= start && a.pinDragFrom < end {
+						row.ZIndex(1)
+					}
 				}
 			})
 		}
@@ -1060,7 +1104,15 @@ func (a *application) card(c *ui.Context, i int) {
 	}
 	// 拖动本身不改数据：松手时才在下一帧的 applyPending 里重排（渲染途中不能改 results）。
 	col = col.Draggable(a.pinDragPoint(i), ui.DraggableOptions{})
+	if dragging {
+		// 同一行里也要压住右边的卡片；只设父行不够。
+		col = col.ZIndex(1)
+	}
 	a.trackPinDrag(i, col)
+	h := a.pinHandle(i)
+	col = col.Bind(h)
+	// 这里读到的是上一帧提交后的矩形，正是用户此刻看到的那张卡片。
+	a.pinRects = append(a.pinRects, h.Bounds(c))
 }
 
 // hoverSelect 让"指针停在哪张卡上"就等于选中哪张：鼠标一移过去选中就跟着走，

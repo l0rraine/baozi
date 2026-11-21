@@ -48,6 +48,8 @@ var (
 	procRelCapture = dragUser32.NewProc("ReleaseCapture")
 	procGetCursor  = dragUser32.NewProc("GetCursorPos")
 	procSetWinPos  = dragUser32.NewProc("SetWindowPos")
+	procScreenCli  = dragUser32.NewProc("ScreenToClient")
+	procGetDpi     = dragUser32.NewProc("GetDpiForWindow")
 
 	// 问"某个键现在还按着吗"：捕获丢了要靠它分辨"拖完了"还是"被抢了"。
 	procGetAsyncKey = dragUser32.NewProc("GetAsyncKeyState")
@@ -209,6 +211,16 @@ func cursorPos() (int32, int32) {
 	return p.X, p.Y
 }
 
+// windowScale 返回窗口所在显示器的缩放：UI 按 DIP 排版，客户区消息是物理像素。
+// 125% 屏上卡片矩形是 846 宽，客户区却是 1057 宽，比较前必须除回 DIP。
+func windowScale(hwnd uintptr) float32 {
+	dpi, _, _ := procGetDpi.Call(hwnd)
+	if dpi == 0 {
+		return 1
+	}
+	return float32(dpi) / 96
+}
+
 func windowXY(hwnd uintptr) (int32, int32) {
 	x, y, _, _ := win.WindowRectPixels(hwnd)
 	return int32(x), int32(y)
@@ -244,6 +256,16 @@ func (d *selfDrag) subclassProc(hwnd, msg, wp, lp, id, ref uintptr) uintptr {
 		d.startCursorX, d.startCursorY = cursorPos()
 		d.startWinX, d.startWinY = windowXY(d.host)
 		d.lastX, d.lastY = d.startWinX, d.startWinY
+		// 固定卡片自己会处理拖动排序。窗口拖动必须在这里就让开，否则子类化
+		// 比 mygo 先收到鼠标移动，会把卡片拖动直接抢成拖整块面板。
+		var pt point
+		pt.X, pt.Y = d.startCursorX, d.startCursorY
+		procScreenCli.Call(hwnd, uintptr(unsafe.Pointer(&pt)))
+		scale := windowScale(hwnd)
+		hit := d.app.pinPressHit(float32(pt.X)/scale, float32(pt.Y)/scale)
+		if hit {
+			d.pending = false
+		}
 		// 照旧转发：图标/搜索框/按钮的按下态、聚焦都要走 mygo 那一套。
 		return d.call(hwnd, msg, wp, lp)
 

@@ -135,8 +135,14 @@ func TestPinDragReorders(t *testing.T) {
 	}
 	// 按在名字上方那块图标区域（属于卡片本身，不是文字），往右拖一格再松手。
 	x, y := r.X+r.W/2, r.Y-14
+	if !a.pinPressHit(x, y) {
+		t.Fatalf("按在固定卡片 (%.1f,%.1f) 上却没判定成固定卡，窗口拖动会抢走它", x, y)
+	}
 	tester.Press(x, y)
 	tester.Frame()
+	if d := tester.Drags(); d != 0 {
+		t.Fatalf("按在固定卡片上启动了窗口拖动：Drags=%d", d)
+	}
 	tester.Move(x+95, y)
 	tester.Frame()
 	dumpPreview(t, tester) // 拖动中途的样子（BAOZI_PREVIEW 控制）

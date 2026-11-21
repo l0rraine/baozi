@@ -5,6 +5,7 @@ import "testing"
 // shouldFollow 的三类场景：
 //  1. 第一次见到框：只有刚从文件管理器切过来才跳；
 //  2. 见过框、期间版本变过：即使紧邻的上一个前台是应用主窗（Alt+Tab 回来），也要跳；
+//     版本号在"来源窗口重新成为前台"时就会 +1，所以只切到 Arke、没换目录也算变过；
 //  3. 见过框、版本没变：不跳（保护用户手动在框里选的目录）。
 func TestShouldFollow(t *testing.T) {
 	cases := []struct {
@@ -19,6 +20,7 @@ func TestShouldFollow(t *testing.T) {
 		{"第一次·从普通程序来", 0, false, 3, false, false},
 		{"见过·版本变了·紧邻的是普通程序（Alt+Tab 回来）", 3, true, 4, false, true},
 		{"见过·版本变了·上次还是文件管理器", 3, true, 4, true, true},
+		{"见过·只切过来源、目录没变", 3, true, 4, false, true},
 		{"见过·版本没变·上次是文件管理器", 4, true, 4, true, false},
 		{"见过·版本没变·上次是普通程序", 4, true, 4, false, false},
 	}

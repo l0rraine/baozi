@@ -3,7 +3,8 @@
 // 对应 Lertaro 的 `IActivePathCollector`（各文件管理器一个 collector）与
 // `Core/Hook/ExplorerIntegration/FileDialogNavigationTracker.cs`：
 //
-//  1. 记住"最近一次文件管理器所在的目录"（lastDir），目录一变就把版本号 +1；
+//  1. 记住"最近一次文件管理器所在的目录"（lastDir）；目录一变版本号 +1，
+//     另外只要文件管理器窗口重新成为前台也 +1（换没换目录都算"去看过"）；
 //     目录来源目前接了七种（见 sources.go 的 Source*）：
 //     - 资源管理器（CabinetWClass，读地址栏面包屑 + 已知文件夹名字还原）
 //     - Total Commander（TTOTAL_CMD，WM_COPYDATA 远程控制协议，totalcmd.go）
@@ -16,7 +17,7 @@
 //     每种都能在设置里单独关掉。
 //  2. 每当一个「打开 / 另存为」框成为前台：
 //     - 第一次见到它：只有上一次活动的确实是文件管理器，才把最近记住的目录送过去；
-//     - 之后它再出现、而版本号变过（期间文件管理器换过目录）→ 再送一次，
+//     - 之后它再出现、而版本号变过（期间切到过文件管理器，换没换目录都算）→ 再送一次，
 //     不管中间是否还夹了别的窗口（Alt+Tab 会先切到应用主窗，见 shouldFollow）；
 //     - 版本没变就一动不动，免得把用户手动在框里选的目录拽回去。
 //
@@ -239,6 +240,11 @@ func (f *DialogFollow) poll() {
 		f.mu.Lock()
 		f.lastActive = root
 		f.lastSource = root
+		// 只要目录来源窗口重新成为前台，就算"用户刚去看过它"，版本号 +1，
+		// 哪怕它的目录没变。否则"打开框后切到 Arke（原地没动）再切回来"不会跟随，
+		// 用户必须先在 Arke 里换一次目录才生效。目录随后真变了，rememberDir 还会再 +1，
+		// 多一次只影响版本差值，不影响判定。
+		f.version++
 		f.mu.Unlock()
 		// 这里顺手读一次只是为了让"停在文件管理器里不动"也能被记住，
 		// 真正决定导航目标的还是 handleDialog 里那次现场重读。
@@ -349,12 +355,13 @@ func (f *DialogFollow) dialogSeen(hwnd uintptr) (int, bool) {
 //
 //   - 第一次见：只有刚从文件管理器切过来才送。否则可能是用户从任何程序里
 //     打开的一个框，它原本停在哪就停在哪，不该被一个几小时前的目录拽走。
-//   - 见过：只要期间版本号变过（用户在框外确实换过目录）就送，**不管紧邻的
-//     上一个前台是不是文件管理器**。
+//   - 见过：只要期间版本号变过（用户在框外切到过文件管理器，换没换目录都算）就送，
+//     **不管紧邻的上一个前台是不是文件管理器**。
 //     这一条是为了 Alt+Tab：框开着 → Alt+Tab 去 Arke 换目录 → Alt+Tab 回来时
 //     Windows 可能先把应用主窗（记事本本身）切成前台，用户再点一下框；这时
 //     prev 是记事本而不是 Arke，只认 prev 就会漏。版本号变过就足以说明
-//     用户去文件管理器动过目录，和中间夹了谁都无关。
+//     用户去看过文件管理器，和中间夹了谁都无关。
+//     只看目录变化不够：切到 Arke 但没动目录时版本不会升，用户会觉得"白切了"。
 func shouldFollow(seenVersion int, seenBefore bool, version int, prevWasSource bool) bool {
 	if !seenBefore {
 		return prevWasSource
@@ -366,7 +373,7 @@ func shouldFollow(seenVersion int, seenBefore bool, version int, prevWasSource b
 //   - 框第一次出现、且上一次活动的是文件管理器 → 直接把 lastDir 送过去；
 //     之前是"第一次只登记、等版本再变一次才送"，结果是打开框基本不跟随
 //     （版本在框出现那一刻就已经是最新的，等它再变一次纯属碰运气）；
-//   - 之后它再出现、而版本号变过（期间文件管理器换过目录）→ 再送一次；
+//   - 之后它再出现、而版本号变过（期间切到过文件管理器，换没换目录都算）→ 再送一次；
 //   - 版本没变就一动不动，免得把用户手动在框里选的目录拽回去。
 func (f *DialogFollow) handleDialog(hwnd uintptr, prevWasSource bool) {
 	f.mu.Lock()

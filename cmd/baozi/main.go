@@ -2551,6 +2551,18 @@ func (a *application) show() {
 		return
 	}
 	// 先把这个开关立起来：后面的定期外观复查（ensureShell）以它为准。
+	// 唤出耗时：一段一段量，最后打成一行。低配机上"呼出有点卡"没法靠猜 ——
+	// 得先知道这几十毫秒花在抓屏、底图、首帧哪一段上。
+	prev := time.Now()
+	spent := make([]string, 0, 12)
+	lap := func(name string) {
+		d := time.Since(prev)
+		spent = append(spent, fmt.Sprintf("%s %.1fms", name, float64(d.Microseconds())/1000))
+		prev = time.Now()
+	}
+	defer func() {
+		log.Print("唤出耗时: ", strings.Join(spent, " / "))
+	}()
 	a.panelUp.Store(true)
 	a.shellProbes = 0
 	// 上一次收起时阴影层可能还亮着（面板藏了，阴影是另一个窗口，不会自己消失），
@@ -2571,12 +2583,15 @@ func (a *application) show() {
 	// 没变化时只是两次 stat（微秒级）；有变化才复制快照叠增量（约 15ms），
 	// 而这点时间藏在面板动画里，感知不到。
 	a.refreshIndex(true)
+	lap("索引")
 	// 应用列表也顺手查一次：新装的软件会改开始菜单，变了就后台重读，
 	// 不用重启 Baozi（文件索引是实时的，应用列表没理由滞后）。
 	a.reloadAppsIfStale()
 	a.refilter()
+	lap("筛选（含应用列表）")
 	// 玻璃要在 Show 之前抓：那一刻窗口还没上屏，抓到的才是它后面的画面。
 	a.refreshGlass()
+	lap("抓屏+磨砂")
 	// 圆角区域要在 Show **之前**就设好。
 	//
 	// 这个窗口是 noRedirect 合成的：第一帧如果按矩形合成，四角就是四块半透明的
@@ -2585,6 +2600,7 @@ func (a *application) show() {
 	// 就是"偶尔出现四个直角，再激活一次面板又消失了"。
 	a.applyRoundRegion()
 	a.panel.Show()
+	lap("Show")
 	// 窗口区域：这块窗口是 noRedirect 合成的，圆角以外的像素透不出桌面、DWM 会
 	// 填白，所以形状只能靠区域切。半径比内容圆角大 glassRegionSlack，让那条 1 位
 	// 掩码的硬边落在四角月牙铺的纯桌面色里；弧本身的抗锯齿由月牙的 alpha 给。
@@ -2600,12 +2616,15 @@ func (a *application) show() {
 	// 件事不能放到 Show 之前，否则读到的还是上一处桌面。
 	// 面板四角露出的那块底色（deskColor）由它给出，每一次唤出都要更新。
 	a.pickDeskColor(nil)
+	lap("桌面色")
 	// force=true：每次唤出都重建一次，哪怕参数和上次一模一样（上一轮可能是从
 	// 别的窗口状态退下来的）。
 	a.refreshCorners(true)
+	lap("四角")
 	// 底图必须在 Show 之前/之后最早的时刻烘好：面板第一帧铺的就是它，
 	// 底图还没生成的那一帧是矩形（用户报的"偶尔出现四个直角"）。
 	a.refreshBacking(true)
+	lap("底图")
 	// 面板的自绘拖动（dragwin.go）：窗口建好、位置定下之后在它的 hwnd 上挂一层
 	// 子类化。必须放在 Show 之后 —— mygo 显示窗口时会重设 WndProc，太早挂会被顶掉。
 	if hwnd := a.panel.NativeHandle(); hwnd != 0 {
@@ -2614,9 +2633,11 @@ func (a *application) show() {
 	// 唤出即置顶。别的置顶窗口（豆包工作窗就是）盖在上面时，鼠标消息落不到面板，
 	// 表现就是"完全拖不动"。
 	a.raisePanel()
+	lap("置顶")
 	// 阴影层放在最后：它是从面板外侧取样的，得等四角的桌面色取完再显示，
 	// 否则那几像素的取样会被自己的阴影压暗。
 	a.refreshShadow()
+	lap("投影")
 	// Show 内部只调 SetForegroundWindow，从任务栏/别的窗口切回来时会被前台锁拒绝，
 	// 所以这里自己带上 AttachThreadInput 再抢一次；拿不到也不影响面板显示。
 	if !forceForeground(a.panel.NativeHandle()) {
@@ -2624,6 +2645,7 @@ func (a *application) show() {
 	}
 	// 焦点要等窗口真的成为前台之后再交给输入框，否则焦点会被重新激活的窗口抢走。
 	a.panel.Update(func() { a.input.Focus() })
+	lap("首帧")
 	// 弹出过程结束后把最终位置记一次：这时它要么是配置里的值，要么是用户已经
 	// 拖过的新位置，两种都该落盘。（等于配置时 savePanelGeometry 会跳过写盘。）
 	// 顺便在这一刻复查一次外观状态：弹出动画里 mygo 会反复调 SetWindowPos、动窗口

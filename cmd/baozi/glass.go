@@ -123,6 +123,28 @@ func (a *application) captureCornerPatches() {
 		{cx, cy + ch - size},
 		{cx + cw - size, cy + ch - size},
 	}
+	// 手边已经有半分辨率整屏快照（captureFilm 先抓它）就直接从快照里裁：
+	// 四次小 BitBlt 每次都要等 DWM 合成一轮，本机实测 22ms，比整屏抓一半还贵；
+	// 而且这块月牙用的就是"糊得均匀"的色块，双线性放大看不出来（cornerPatchesAt
+	// 拖动时用的也是同一条路子）。
+	if a.deskHalf != nil {
+		got := a.cornerPatchesAt(cx, cy, cw, ch, size)
+		kept := 0
+		for i := 0; i < 4; i++ {
+			if got[i] == nil || got[i] == a.cornerPatches[i] {
+				continue
+			}
+			// 这里不做 patchLooksBlank 的剔除：这块是从唤出前的快照里裁的，
+			// 不可能是面板自己，真是纯白那就是桌面本来白 —— 照抄才是对的，
+			// 剔掉反而要去现场再抓四回（每次都得等 DWM 合成，本机 5ms 上下）。
+			a.cornerPatches[i] = got[i]
+			kept++
+		}
+		if kept > 0 {
+			log.Printf("玻璃: 四角 patch %dx%d 从半分辨率快照裁出 %d/4（窗口 %d,%d %dx%d）", size, size, kept, cx, cy, cw, ch)
+		}
+		return
+	}
 	kept := 0
 	for i := 0; i < 4; i++ {
 		img, err := win.CaptureRect(origins[i][0], origins[i][1], size, size)
@@ -312,9 +334,10 @@ func (a *application) captureFilm(except *subGlass, ownPanel bool) {
 	// 抓屏前把自家所有窗口设成"截图不可见"，抓完立刻恢复（见上）。
 	restore := a.excludeSelfCapture()
 	defer restore()
-	// 四角那小块桌面顺手抓下来（此刻窗口还没显示）。
-	a.captureCornerPatches()
-	// 半分辨率整屏快照：四角"弧外"那块以后就靠它现场裁，面板拖动/缩放都不会过期。
+	// 先抓半分辨率整屏快照：四角"弧外"那块以后就靠它现场裁，面板拖动/缩放都不会过期。
+	// 这是整个唤出里唯一躲不掉的一笔开销 —— 抓一次整屏就得等 DWM 合成一回
+	// （本机 2560×1440 实测 40ms）。所以下面所有东西都尽量从这一张里派生，
+	// 绝不再碰第二次屏幕 DC。
 	if vx, vy, vw, vh := win.VirtualScreenRect(); vw > 0 && vh > 0 {
 		if half, err := win.CaptureScreenScaled(vx, vy, vw, vh, deskHalfStep); err == nil {
 			a.deskHalf = half
@@ -324,6 +347,10 @@ func (a *application) captureFilm(except *subGlass, ownPanel bool) {
 			a.deskHalf = nil
 		}
 	}
+	// 四角那小块桌面顺手取下来（此刻窗口还没显示）。有半分辨率快照时直接从它上面裁，
+	// 不走屏幕 DC —— 四次小 BitBlt 每次都要等 DWM 合成一轮，本机实测 22ms，
+	// 比整屏抓一半还贵。
+	a.captureCornerPatches()
 	if win.SystemGlass() {
 		// Win11 22H2 起这层材质由 DWM 自己画（mygo 的 vibrancy 走系统 backdrop），
 		// 用不上我们这张图。
@@ -334,11 +361,22 @@ func (a *application) captureFilm(except *subGlass, ownPanel bool) {
 	if w <= 0 || h <= 0 {
 		return
 	}
-	small, err := win.CaptureScreenScaled(x, y, w, h, glassStep)
-	if err != nil {
-		log.Printf("玻璃: 全屏快照失败 %v", err)
-		a.frost = nil
-		return
+	// 磨砂图优先从**刚抓的那张半分辨率底片**里降采样出来：整屏 StretchBlt + HALFTONE
+	// 是这个抓屏里最贵的一步，唤出耗时的九成都在这儿（实测 100ms 里 ~70ms 是两次
+	// 整屏拷贝）。磨砂图本来就要糊到看不出细节，从 1/2 再降到 1/4 和直接从屏幕
+	// 降到 1/4 肉眼看不出区别。
+	var small *image.RGBA
+	if a.deskHalf != nil && a.deskHalf.Rect.Dx() >= 2 && a.deskHalf.Rect.Dy() >= 2 {
+		small = downscaleRGBA(a.deskHalf, glassStep/deskHalfStep)
+	}
+	if small == nil {
+		var err error
+		small, err = win.CaptureScreenScaled(x, y, w, h, glassStep)
+		if err != nil {
+			log.Printf("玻璃: 全屏快照失败 %v", err)
+			a.frost = nil
+			return
+		}
 	}
 	a.screenW, a.screenH = w, h
 	a.screenX, a.screenY = x, y
@@ -347,7 +385,46 @@ func (a *application) captureFilm(except *subGlass, ownPanel bool) {
 	if a.frost == nil {
 		return
 	}
-	log.Printf("玻璃: 全屏快照 %dx%d（屏幕原点 %d,%d）→ 磨砂图 %dx%d", w, h, x, y, w/glassStep, h/glassStep)
+	log.Printf("玻璃: 全屏快照 %dx%d（屏幕原点 %d,%d）→ 磨砂图 %dx%d", w, h, x, y, small.Rect.Dx(), small.Rect.Dy())
+}
+
+// downscaleRGBA 把一张图按 step 倍降采样（盒式平均）。
+//
+// 目的是省掉一次整屏 StretchBlt：手边已经有 1/2 的桌面底片时，磨砂图只要再
+// 往下缩一级就够了。纯 Go 的加法循环比 GDI 的 HALFTONE 整屏重采样便宜得多，
+// 而且不碰屏幕 DC（那一步在低配机上最贵）。
+func downscaleRGBA(src *image.RGBA, step int) *image.RGBA {
+	if src == nil || step < 2 {
+		return nil
+	}
+	dx, dy := src.Rect.Dx(), src.Rect.Dy()
+	dw, dh := dx/step, dy/step
+	if dw <= 0 || dh <= 0 {
+		return nil
+	}
+	dst := image.NewRGBA(image.Rect(0, 0, dw, dh))
+	n := uint32(step * step)
+	for y := 0; y < dh; y++ {
+		row := src.PixOffset(src.Rect.Min.X, src.Rect.Min.Y+y*step)
+		for x := 0; x < dw; x++ {
+			var r, g, b uint32
+			for sy := 0; sy < step; sy++ {
+				base := row + sy*src.Stride + x*step*4
+				for sx := 0; sx < step; sx++ {
+					o := base + sx*4
+					r += uint32(src.Pix[o])
+					g += uint32(src.Pix[o+1])
+					b += uint32(src.Pix[o+2])
+				}
+			}
+			o := dst.PixOffset(x, y)
+			dst.Pix[o] = uint8(r / n)
+			dst.Pix[o+1] = uint8(g / n)
+			dst.Pix[o+2] = uint8(b / n)
+			dst.Pix[o+3] = 255
+		}
+	}
+	return dst
 }
 
 // refreshCorners 取四角的桌面颜色并重画月牙。必须在窗口**已经移到本次唤出的
@@ -955,9 +1032,10 @@ func (a *application) frostFromScaled(small *image.RGBA) *ui.Bitmap {
 		return nil
 	}
 	// 留一张没动过的底片：设置页改完透明度要当场重做一张（见 frostImage），
-	// 不用等下次唤出重新抓屏。必须单独存一份 —— win.Blur 和 win.Tint 都是原地
-	// 改这张图，直接留引用的话底片自己就变成模糊+压白的结果了。
-	a.frostBase = dupRGBA(small)
+	// 不用等下次唤出重新抓屏。这里直接留 small 本身、不再复制一份 ——
+	// frostImage 每回都是先 dup 再模糊，不会改到这张；整屏图再复制一遍
+	// 在低配机上也是白白多花几毫秒。
+	a.frostBase = small
 	a.deskDark = isDarkImage(a.frostBase)
 	glassFallback = [3]uint8{247, 248, 252}
 	if a.deskDark {

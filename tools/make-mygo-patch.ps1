@@ -20,7 +20,7 @@ $patched = Join-Path $root '.patched-mygo'
 $upstream = Join-Path (go env GOMODCACHE) "github.com\egoist\mygo@$Version"
 if (-not (Test-Path -LiteralPath $upstream)) { throw "上游源码不在模块缓存里：$upstream" }
 
-# 补丁涉及的十个文件。加文件要同时改这里，否则 -Verify 会报"还有差异没进 patch"。
+# 补丁涉及的十一个文件。加文件要同时改这里，否则 -Verify 会报"还有差异没进 patch"。
 $files = @(
   'content.go',
   'internal/gpu/d3d11/d3d11.go',
@@ -31,6 +31,7 @@ $files = @(
   'ui/headless.go',
   'ui/runtime.go',
   'ui/services.go',
+  'ui/widgets.go',
   'ui/window.go'
 )
 

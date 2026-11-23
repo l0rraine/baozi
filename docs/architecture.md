@@ -2507,13 +2507,13 @@ Windows 不允许改正在运行的可执行文件，而我们要换的就是自
 计划任务用；正常双击启动不带参数，完全走不到这条分支。两条路共用同一段代码，
 免得只有界面那条会被修好、命令行那条慢慢漂掉。
 
-## mygo 补丁：改了哪十处，为什么不能放回本项目
+## mygo 补丁：改了哪十一处，为什么不能放回本项目
 
 `go.mod` 里是 `replace github.com/egoist/mygo => ./.patched-mygo`：仓库里放一份
 上游 `v0.8.1` 的源码副本，只参与本项目编译；`go/pkg/mod` 里的上游和 `go.sum`
 都没动，别的项目不受影响。
 
-副本里相对上游只有下面十处改动。`tools/make-mygo-patch.ps1` 会把它们导成
+副本里相对上游只有下面十一处改动。`tools/make-mygo-patch.ps1` 会把它们导成
 `patches/mygo-v0.8.1.patch`；带 `-Verify` 跑一遍会把这个 patch 应用到一个干净的
 上游副本上，再逐字节比对，确认"文件里写的"就是"实际在编的"。
 
@@ -2530,6 +2530,7 @@ Windows 不允许改正在运行的可执行文件，而我们要换的就是自
 | `internal/windows/window.go` | `WindowOptions.CornerRadius` 记进 window，供合成器取用 | 半径要在建窗口时落进内部状态；0 表示直角、不做内容裁剪 |
 | `ui/frame.go`、`ui/services.go`、`ui/runtime.go`、`ui/window.go`、`content.go` | `FrameNow()`：立刻出帧、不等下一次刷新 | 出帧节拍在 host 的 `PacedSurface` 里；外面只能 `Invalidate`，那正是差一帧的来源 |
 | `ui/headless.go` | 无窗口模式的 `frameNow`，以及 `Tester.Drags()` 计数 | 测试钩子，跟着上面那条走 |
+| `ui/widgets.go` | `stylePanel`：`Theme.Background` 透明时浮层底板退回 `t.Surface`；`Select` 选中项改用 `SurfaceHover` | 浮层底板是 `ui` 内部画的；本项目把 `Theme.Background` 设成真透明（圆角四角要露桌面），弹层照着它画就成"能看穿的菜单" |
 
 `FrameNow` 是拖动玻璃时"内容和窗口一起走"的关键：只 `Invalidate` 的话，窗口移动
 落在下一帧、新内容再落一帧，那一帧的差就是"玻璃追不上窗口"。

@@ -443,6 +443,41 @@ index 2e50161..66bac41 100644
  func (s Services) ReadClipboard() string {
  	if rt := s.owner.Value(); rt != nil && !rt.closed {
  		return rt.host.readClipboard()
+diff --git a/ui/widgets.go b/ui/widgets.go
+index 0dabfd0..c0656e1 100644
+--- a/ui/widgets.go
++++ b/ui/widgets.go
+@@ -684,9 +684,18 @@ func corePopover(c *context, anchor *node, open *bool, fn func()) *node {
+ }
+ 
+ // stylePanel gives the panel of a popup the theme's look.
++//
++// 底板不能用 Theme.Background：整窗自绘的窗口（背景贴一张自己烘的玻璃底图，
++// 见 baozi 的 glass.go）会把它设成真透明，弹出来的菜单就成了"能看穿的一层"，
++// 底下的复选框、滑杆全串在选项上。底色透明时退回控件那层 Surface ——
++// 浮层本来就该盖住底下的东西，不该透。
+ func stylePanel(c *context, panel *node) {
+ 	t := c.theme
+-	panel.Margin(t.Space(1), 0, 0, 0).Padding(t.Space(1)).Radius(t.Radius+2).Background(t.Background).Border(1, t.Border)
++	bg := t.Background
++	if bg.A < 255 {
++		bg = t.Surface
++	}
++	panel.Margin(t.Space(1), 0, 0, 0).Padding(t.Space(1)).Radius(t.Radius+2).Background(bg).Border(1, t.Border)
+ 	panel.Shadow(0, 6, 20, 0, RGBA(0, 0, 0, 0.18))
+ }
+ 
+@@ -711,7 +720,9 @@ func coreSelect(c *context, selected *string, options []string) *node {
+ 			case item.Highlighted():
+ 				item.Background(t.Accent).TextColor(t.AccentText)
+ 			case opt == *selected:
+-				item.Background(t.Surface)
++				// 浮层底色可能本身就是 Surface（见 stylePanel），选中的那行再用
++				// Surface 就和底板同色、彻底看不出来了，所以往下一档。
++				item.Background(t.SurfaceHover)
+ 			}
+ 			item.Children(func() { coreText(c, opt).SingleLine() })
+ 		}
 diff --git a/ui/window.go b/ui/window.go
 index 3b3dd5b..87accac 100644
 --- a/ui/window.go

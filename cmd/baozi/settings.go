@@ -844,15 +844,17 @@ func sectionTitle(c *ui.Context, t *ui.Theme, title, desc string) {
 	})
 }
 
-// iconCustomLabel 是下拉里"自定义"那一项：选它才露出倍数输入框。
+// iconCustomLabel 是下拉里"自定义"那一项：选它才露出像素滑杆。
 const iconCustomLabel = "自定义"
 
 // iconScaleSteps 是图标大小的几个台阶。100% 就是系统缩放下的默认大小，
 // 所以这几个数不是"绝对尺寸"，而是"在默认基础上再放大缩小多少"。
+// 50% 正好压在下限（MinIconScale）：再小图标就认不出来了。
 var iconScaleSteps = []struct {
 	Label string
 	Value float64
 }{
+	{"50%", 0.5},
 	{"75%", 0.75},
 	{"100%", 1},
 	{"125%", 1.25},

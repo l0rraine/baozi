@@ -119,7 +119,7 @@ func TestSettingsViewRenders(t *testing.T) {
 // 台阶本身：下拉里要有哪几档、当前倍数落在哪一档、手输的值如何归类。
 func TestIconScalePresets(t *testing.T) {
 	labels := iconScaleLabels()
-	for _, want := range []string{"75%", "100%", "125%", "150%", "175%", "200%", iconCustomLabel} {
+	for _, want := range []string{"50%", "75%", "100%", "125%", "150%", "175%", "200%", iconCustomLabel} {
 		found := false
 		for _, l := range labels {
 			if l == want {
@@ -142,7 +142,7 @@ func TestIconScalePresets(t *testing.T) {
 	for _, tc := range []struct {
 		label string
 		want  float64
-	}{{"75%", 0.75}, {"175%", 1.75}, {"200%", 2}} {
+	}{{"50%", 0.5}, {"75%", 0.75}, {"175%", 1.75}, {"200%", 2}} {
 		got, ok := iconPresetValue(tc.label)
 		if !ok || got != tc.want {
 			t.Fatalf("%s 应当对应 %v，实际 %v（%v）", tc.label, tc.want, got, ok)

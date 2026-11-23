@@ -368,6 +368,17 @@ type Weights struct {
 type Index struct {
 	Roots    []string `json:"roots"`
 	Excludes []string `json:"excludes"`
+	// Frozen 是"收录但不跟增量"的目录：全量建索引时照常进来（所以搜得到），
+	// 但 USN 增量一律不收（见 index.Rule.Freeze）。
+	//
+	// 这一条专治"自己喂自己"：Baozi 每 5 秒写一次 index.delta / state.json，
+	// 每次唤出还会往 baozi.log 追加一行，这些动作全都产生 USN 记录。若把它们
+	// 当成"用户动了文件"再索引一遍、再写一条增量，就会 5 秒一轮永不空闲。
+	// 反过来把它们整个排除掉，用户又搜不到自己的日志和配置 —— Everything 能搜到
+	// 自己的 Everything.db 就是这个道理（它的库很少重写，靠"收录但不追"）。
+	//
+	// 代价是这些条目的修改时间停在上一次全量重建那一刻，可能偏旧。
+	Frozen []string `json:"frozen"`
 	// IncludeHidden 只对隐藏**文件**生效；隐藏**目录**一律递归进去，
 	// 否则被工具或用户随手设了 Hidden 的备份目录会整棵搜不到。
 	IncludeHidden bool `json:"includeHidden"`
@@ -450,6 +461,7 @@ func Default() *Config {
 		Index: Index{
 			Roots:         []string{},
 			Excludes:      defaultExcludes(),
+			Frozen:        defaultFrozen(),
 			IncludeHidden: false,
 			RescanMinutes: 0,
 		},
@@ -568,6 +580,13 @@ func (c *Config) normalize() {
 	// 把"一定不该索引"的缓存目录并进用户列表：老配置里没有这些项，
 	// 不合并的话隐藏目录解禁后 AppData 里几万个缓存文件会立刻进来抢结果。
 	c.Index.Excludes = mergeExcludes(defaultExcludes(), c.Index.Excludes)
+	// 自用目录（配置/日志/索引文件）走"收录但不跟增量"：老配置里没有这一项，
+	// 得补上，否则第一次增量就把自己的写入喂成永动机。
+	c.Index.Frozen = mergeExcludes(defaultFrozen(), c.Index.Frozen)
+	// 上一版把自用目录写进"排除"里存盘了，读回来和冻结冲突。两者互斥时冻结优先：
+	// 排除了就搜不到用户自己的 config.json / baozi.log，而冻结本来就已经把
+	// 自己的写盘挡在增量之外（见 index.Rule.Freeze）。
+	c.Index.Excludes = subtractRules(c.Index.Excludes, c.Index.Frozen)
 	c.History.Enabled = true // 目前历史是排序权重的一部分，恒开
 }
 
@@ -587,10 +606,16 @@ func defaultExcludes() []string {
 		// "最近使用"的快捷方式集合：Baozi 自己就记历史，索引它只是把 .lnk 塞满结果。
 		"AppData\\Roaming\\Microsoft\\Windows\\Recent",
 		"AppData\\Roaming\\Tencent",
-		// Baozi 自己的数据目录。这一条在增量模式下是**必须**的：
-		// 服务每 5 秒写一次 index.delta（还有 .tmp 改名），每次都产生 USN 记录，
-		// 不排除的话它就把自己的写入当成"用户动了文件"，再索引一遍、
-		// 再攒成增量、再写盘——自己喂自己，永远停不下来。
+	}
+}
+
+// defaultFrozen 是"收录但不跟增量"的自用目录（见 Index.Frozen 的说明）。
+//
+// 这里**不能**写成排除：用户想搜到自己刚改的 config.json、想看 baozi.log，
+// 都是再正常不过的事。所以它进全量索引、能搜到；只是 USN 增量对它一律不收 ——
+// 它自己 5 秒一次的写盘就不会反过来触发索引，也就不用担心自喂。
+func defaultFrozen() []string {
+	return []string{
 		"AppData\\Local\\Baozi",
 	}
 }
@@ -612,6 +637,27 @@ func mergeExcludes(base, user []string) []string {
 			seen[key] = true
 			out = append(out, rule)
 		}
+	}
+	return out
+}
+
+// subtractRules 从 list 里去掉和 drop 完全相同的规则（大小写不敏感）。
+// 只比全等，不做前缀/子串推算：用户手写的 `AppData\Local\Baozi\logs` 那种更细的
+// 排除应当保留 —— 冻结只负责整个目录"收录但不跟增量"这件粗活。
+func subtractRules(list, drop []string) []string {
+	if len(drop) == 0 {
+		return list
+	}
+	gone := make(map[string]bool, len(drop))
+	for _, rule := range drop {
+		gone[strings.ToLower(strings.TrimSpace(rule))] = true
+	}
+	out := list[:0]
+	for _, rule := range list {
+		if gone[strings.ToLower(strings.TrimSpace(rule))] {
+			continue
+		}
+		out = append(out, rule)
 	}
 	return out
 }

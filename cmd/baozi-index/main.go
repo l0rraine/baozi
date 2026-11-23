@@ -361,18 +361,27 @@ func runOnce() {
 	}
 }
 
-// ruleFor 把配置里的收录规则，加上"数据目录本身必须排除"这一条。
+// ruleFor 把配置里的收录规则，加上"数据目录收录但不跟增量"这一条。
 //
 // 为什么必须加：服务每 5 秒写一次 index.delta（还有 .tmp 改名、heartbeat、
-// progress），每个动作都有 USN 记录。不排除数据目录，它就会把自己的写入
+// progress），每个动作都有 USN 记录。不冻结它，服务就会把自己的写入
 // 当成"用户动了文件"再索引一遍，自己喂自己。
+//
+// 但它**不能排除**：用户要搜得到自己的 config.json 和 baozi.log（Everything
+// 能搜到自己的 Everything.db 也是这个道理）。所以走"全量收录 + 增量冻结"：
+// 建索引时它照常进来，之后对它的变化一律丢弃 —— 代价是这些条目的修改时间
+// 停在上一次全量重建那一刻。
 //
 // 配置里的默认规则已经带了 %LOCALAPPDATA%\Baozi，但用户可以把数据目录
 // 指到别处（--data-dir），所以这里再按绝对路径补一道。
 func ruleFor(cfg *config.Config, dataDir string) (config.Index, index.Rule) {
 	ic := cfg.Index
-	ic.Excludes = append(append([]string{}, ic.Excludes...), dataDir)
-	return ic, index.Rule{Excludes: ic.Excludes, IncludeHidden: ic.IncludeHidden}
+	ic.Frozen = append(append([]string{}, ic.Frozen...), dataDir)
+	return ic, index.Rule{
+		Excludes:      ic.Excludes,
+		Freeze:        ic.Frozen,
+		IncludeHidden: ic.IncludeHidden,
+	}
 }
 
 // runIndexLoop 是服务的核心：首轮全量建索引，之后**每一条 USN 记录都直接改内存表**。

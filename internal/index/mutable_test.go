@@ -133,7 +133,6 @@ func TestMutableApplyRename(t *testing.T) {
 func TestMutableApplyFilters(t *testing.T) {
 	m, frn := testTable(t)
 	rootFRN := frn["root"]
-
 	// 父不在索引里 → 不收（和全量一致：可达性决定一切）
 	if _, ok := m.Apply(Change{
 		FRN: 400, ParentFRN: 999999, Name: "孤儿.txt", Create: true,
@@ -269,5 +268,47 @@ func TestCompactTrigger(t *testing.T) {
 	}
 	if !m.Compact(10, 1) {
 		t.Fatal("名字追加到线却没要求整理")
+	}
+}
+
+// 冻结目录（Baozi 自己的 %LOCALAPPDATA%\Baozi）：条目在表里（搜得到），
+// 但它的新增/删除一条都不能被应用 —— 否则它每 5 秒写一次 index.delta，
+// 就会把自己喂成永不空闲的增量循环。
+func TestFreezeKeepsEntriesButIgnoresChanges(t *testing.T) {
+	tab := &Table{Names: make([]byte, 0, 4096), Py: make(map[int32]uint64, 8)}
+	m := NewMutable(tab, NewFRNMap(8))
+	root := m.Add(`C:\`, -1, KindDir, 0, 0, 5)
+	users := m.Add("Users", root, KindDir, 0, 0, 10)
+	admin := m.Add("Administrator", users, KindDir, 0, 0, 11)
+	appData := m.Add("AppData", admin, KindDir, 0, 0, 12)
+	local := m.Add("Local", appData, KindDir, 0, 0, 13)
+	dataDir := m.Add("Baozi", local, KindDir, 0, 0, 14)
+	logFRN := uint64(15)
+	log := m.Add("baozi.log", dataDir, KindFile, 0, 0, logFRN)
+
+	frozen := Rule{Freeze: []string{`AppData\Local\Baozi`}}
+
+	// 它本来就在表里：搜得到，路径也对。
+	if got := tab.PathOf(log); got != `C:\Users\Administrator\AppData\Local\Baozi\baozi.log` {
+		t.Fatalf("冻结目录里的条目应当在表里，实际路径 %q", got)
+	}
+	// 目录里新建文件：不收。
+	if _, ok := m.Apply(Change{
+		FRN: 20, ParentFRN: 14, Name: "index.delta", Create: true,
+	}, frozen); ok {
+		t.Fatal("冻结目录里的新增被应用了（会自己喂自己）")
+	}
+	// 目录里删文件：不收（写 .tmp 再改名就是这一对记录）。
+	if _, ok := m.Apply(Change{FRN: logFRN, Delete: true}, frozen); ok {
+		t.Fatal("冻结目录里的删除被应用了")
+	}
+	if tab.KindOf(log) == KindDeleted {
+		t.Fatal("冻结目录里的条目被标成墓碑了，用户就搜不到自己的日志")
+	}
+	// 冻结之外的目录照常应用，别把整套增量弄停了。
+	if _, ok := m.Apply(Change{
+		FRN: 21, ParentFRN: 5, Name: "other.txt", Create: true,
+	}, frozen); !ok {
+		t.Fatal("冻结规则误伤了普通目录")
 	}
 }

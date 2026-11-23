@@ -184,3 +184,80 @@ func TestPanelPos(t *testing.T) {
 		t.Fatalf("0,0 应读回 0,0 ok=true，实际 %d,%d ok=%v", gx, gy, ok)
 	}
 }
+
+// 自用数据目录不能进"排除"，只能进"冻结"：
+// 排除就搜不到自己的 config.json / baozi.log，不冻结又会把自己的写盘喂成增量永动机。
+func TestDataDirIsFrozenNotExcluded(t *testing.T) {
+	c := Default()
+	c.normalize()
+	for _, rule := range c.Index.Excludes {
+		if strings.EqualFold(rule, `AppData\Local\Baozi`) {
+			t.Fatalf("排除规则里不该再有自用目录：%v", c.Index.Excludes)
+		}
+	}
+	frozen := false
+	for _, rule := range c.Index.Frozen {
+		if strings.EqualFold(rule, `AppData\Local\Baozi`) {
+			frozen = true
+		}
+	}
+	if !frozen {
+		t.Fatalf("冻结规则里应当有自用目录：%v", c.Index.Frozen)
+	}
+}
+
+// 老配置里没有 frozen 这一项：读回来必须补上，否则第一次增量就把自己喂成永动机。
+func TestFrozenMergedFromOldConfig(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("BAOZI_DATA_DIR", dir)
+	path := filepath.Join(dir, "config.json")
+	old := `{"index":{"roots":["C:\\"],"excludes":[]}}`
+	if err := os.WriteFile(path, []byte(old), 0o644); err != nil {
+		t.Fatalf("写旧配置: %v", err)
+	}
+	cfg, _, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	hasSelf := false
+	for _, rule := range cfg.Index.Frozen {
+		if strings.EqualFold(rule, `AppData\Local\Baozi`) {
+			hasSelf = true
+		}
+	}
+	if !hasSelf {
+		t.Fatalf("老配置读回后没有补上冻结规则：%v", cfg.Index.Frozen)
+	}
+}
+
+// 上一版把自用目录写进"排除"存盘了：读回来两条规则打架，必须冻结赢 ——
+// 留在排除里就搜不到用户自己的 config.json / baozi.log（真实踩过的坑：
+// 改成冻结之后索引重建了一轮，面板里还是搜不到日志，原因就是盘上那条旧排除）。
+func TestFrozenWinsOverStaleExclude(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("BAOZI_DATA_DIR", dir)
+	path := filepath.Join(dir, "config.json")
+	old := `{"index":{"roots":["C:\\"],"excludes":["AppData\\Local\\Baozi","node_modules"]}}`
+	if err := os.WriteFile(path, []byte(old), 0o644); err != nil {
+		t.Fatalf("写旧配置: %v", err)
+	}
+	cfg, _, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	for _, rule := range cfg.Index.Excludes {
+		if strings.EqualFold(rule, `AppData\Local\Baozi`) {
+			t.Fatalf("旧的排除规则还留着，自用目录就搜不到：%v", cfg.Index.Excludes)
+		}
+	}
+	// 用户自己写的别的排除不能被误删。
+	kept := false
+	for _, rule := range cfg.Index.Excludes {
+		if rule == "node_modules" {
+			kept = true
+		}
+	}
+	if !kept {
+		t.Fatalf("正常的排除规则被删掉了：%v", cfg.Index.Excludes)
+	}
+}

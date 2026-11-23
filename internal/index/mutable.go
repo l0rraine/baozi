@@ -38,7 +38,14 @@ type Change struct {
 // Rule 是应用增量时要遵守的收录规则（和全量建索引必须一致，
 // 否则同一次变化在两条路径上会给出不同结果）。
 type Rule struct {
-	Excludes      []string
+	Excludes []string
+	// Freeze 是"收录但不跟增量"的目录（见 config.Index.Frozen）：
+	// 全量建索引时它们照常进来，但这里来的变化一律丢弃。
+	//
+	// 为什么不干脆排除：排除了就搜不到用户自己的 config.json / baozi.log。
+	// 而不冻结又不行——Baozi 每 5 秒写一次索引增量、每次唤出写一行日志，
+	// 那些 USN 记录会被当成"用户动了文件"，索引再攒一条增量再写盘，5 秒一轮。
+	Freeze        []string
 	IncludeHidden bool
 }
 
@@ -339,6 +346,14 @@ func (m *Mutable) Apply(c Change, rule Rule) (DeltaOp, bool) {
 		if m.t.KindOf(idx) == KindDeleted {
 			return DeltaOp{}, false
 		}
+		// 冻结目录里的删除也不收（理由见 Rule.Freeze）：Baozi 自己写 index.delta
+		// 就是"写 .tmp 再改名"，那两条记录要是收下来，每 5 秒就攒一条增量。
+		// 代价是真删掉的文件还会留在索引里一条旧记录，下一次全量重建自然清掉。
+		if len(rule.Freeze) > 0 {
+			if p := m.t.PathOf(idx); p != "" && ExcludedPathOnly(rule.Freeze, p) {
+				return DeltaOp{}, false
+			}
+		}
 		m.Kill(idx)
 		return DeltaOp{Op: OpDelete, Idx: idx}, true
 	}
@@ -367,10 +382,12 @@ func (m *Mutable) Apply(c Change, rule Rule) (DeltaOp, bool) {
 	if ExcludedNameOnly(rule.Excludes, c.Name) {
 		return DeltaOp{}, false
 	}
-	// 路径级排除规则要完整路径，只有配了带分隔符的规则才付这个代价。
-	if hasPathRule(rule.Excludes) {
+	// 路径级规则要完整路径，只有真配了带分隔符的规则才付这个代价。
+	// 排除和冻结合起来判一次：两者都可能是路径规则，只拼一次路径。
+	if hasPathRule(rule.Excludes) || hasPathRule(rule.Freeze) {
 		if dir := m.t.PathOf(parent); dir != "" {
-			if ExcludedPathOnly(rule.Excludes, dir+`\`+c.Name) {
+			p := dir + `\` + c.Name
+			if ExcludedPathOnly(rule.Freeze, p) || ExcludedPathOnly(rule.Excludes, p) {
 				return DeltaOp{}, false
 			}
 		}

@@ -1077,10 +1077,21 @@ BaoziIndex（服务，LocalSystem）                    baozi.exe（用户，普
 （`application.show` → `refreshIndex(true)`）。所以"用户看得见的那一刻，索引一定
 是最新的"，平时每两秒就有人动文件的机器也不会被反复复制 75MB。
 
-**数据目录必须排除**：服务每 5 秒写 `index.delta`（还有 `.tmp` 改名、heartbeat、
-progress），每个动作都有 USN 记录。不排除的话它把自己的写入当成"用户动了文件"
-再索引一遍、再攒增量、再写盘——自己喂自己。默认规则里已经有
-`AppData\Local\Baozi`，`ruleFor()` 再按 `--data-dir` 的绝对路径补一道。
+**数据目录是"收录但不跟增量"**：服务每 5 秒写 `index.delta`（还有 `.tmp` 改名、
+heartbeat、progress），每次唤出还会往 `baozi.log` 追加一行，这些动作全都有 USN
+记录。不收它们，服务就把自己的写入当成"用户动了文件"再索引一遍、再攒增量、
+再写盘——自己喂自己；可整个排除掉，用户又搜不到自己的 `config.json` 和
+`baozi.log` 了（Everything 能搜到自己的 `Everything.db` 就是这个道理，它的库
+很少重写）。所以规则分成两条：
+
+- `Index.Excludes` 里的目录**不进索引**（缓存、依赖目录、回收站）；
+- `Index.Frozen` 里的目录**进全量索引、能搜到，但 USN 增量一律丢弃**
+  （`index.Rule.Freeze`，建的时候照收、之后的变化不收）。
+
+默认冻结 `AppData\Local\Baozi`（`config.defaultFrozen`），`ruleFor()` 再按
+`--data-dir` 的绝对路径补一道。代价只有一个：这些条目的修改时间停在上一次
+全量重建那一刻，可能偏旧；真的删掉了的文件也会留一条旧记录，下一次全量重建
+自然清掉。
 
 **为什么阈值这么定**（这是"常驻 8% CPU"的根因，留作历史）：一次重建 15~16 秒、
 几乎占满一个核，`baozi-index.log` 里累计 1515 次、平均 16.59 秒、总计约 7.0 小时

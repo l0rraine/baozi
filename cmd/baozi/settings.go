@@ -484,6 +484,10 @@ func (s *settingsWindow) indexSection(c *ui.Context, t *ui.Theme) {
 			labelledTextArea(c, t, "索引的磁盘/目录", &s.roots)
 			labelledTextArea(c, t, "排除的目录名或路径片段", &s.excludes)
 		})
+		// 自用目录（配置/日志/索引文件）是"收录但不跟增量"：搜得到，但文件时间要等
+		// 下次全量重建才刷新。这一行免得用户以为索引坏了。
+		ui.Text(c, "自用目录 %LOCALAPPDATA%\\Baozi 照常收录、能搜到，但不跟随实时变化：那里文件的时间戳要等下次全量重建才刷新，属正常现象。").
+			FontSize(11).TextColor(t.TextMuted)
 		ui.Row(c).Gap(16).AlignItems(ui.Center).Children(func() {
 			ui.Checkbox(c, &s.includeHidden, "包含隐藏文件")
 		})
@@ -1055,6 +1059,7 @@ func (s *settingsWindow) save() {
 
 	oldRoots := s.app.cfg.Index.Roots
 	oldExcludes := s.app.cfg.Index.Excludes
+	oldFrozen := s.app.cfg.Index.Frozen
 	oldIncludeHidden := s.app.cfg.Index.IncludeHidden
 	cfg.Index.Roots = splitLines(s.roots)
 	cfg.Index.Excludes = splitLines(s.excludes)
@@ -1165,7 +1170,9 @@ func (s *settingsWindow) save() {
 	// 同源同命（一样是后台跑，不挡面板）。
 	rootsDirty := rootsChanged(oldRoots, cfg.Index.Roots)
 	rulesDirty := oldIncludeHidden != cfg.Index.IncludeHidden ||
-		excludesChanged(oldExcludes, cfg.Index.Excludes)
+		excludesChanged(oldExcludes, cfg.Index.Excludes) ||
+		// 冻结规则（收录但不跟增量）也决定"哪些条目进得来"，同属扫描期规则。
+		excludesChanged(oldFrozen, cfg.Index.Frozen)
 	switch {
 	case rootsDirty:
 		s.message = "已保存，正在按新的索引范围重建"

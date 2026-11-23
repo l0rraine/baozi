@@ -93,6 +93,10 @@ const (
 	DefaultGlassTransparency = 59
 	// DefaultShadowPct 是缺省的投影强度（百分比），对应黑度 ≈ 0.34。
 	DefaultShadowPct = 57
+	// DefaultDoubleCtrlIntervalMs 是两次 Ctrl 按下的缺省最大间隔（毫秒）。
+	// 200ms 比 400ms 更接近"顺手连按两下"的节奏：400ms 太宽，Ctrl+C 之后
+	// 隔了小半秒再按 Ctrl 会被误判成唤出。
+	DefaultDoubleCtrlIntervalMs = 200
 )
 
 // PanelRadius 返回生效的圆角半径（DIP）；关掉返回 0，也就是直角。
@@ -431,7 +435,7 @@ func Default() *Config {
 		},
 		Hotkey: Hotkey{
 			DoubleCtrl:           true,
-			DoubleCtrlIntervalMs: 400,
+			DoubleCtrlIntervalMs: DefaultDoubleCtrlIntervalMs,
 			Combo:                "Alt+Shift+Space",
 			DisableInFullscreen:  true,
 		},
@@ -540,7 +544,7 @@ func Save(cfg *Config, path string) error {
 
 func (c *Config) normalize() {
 	if c.Hotkey.DoubleCtrlIntervalMs <= 0 {
-		c.Hotkey.DoubleCtrlIntervalMs = 400
+		c.Hotkey.DoubleCtrlIntervalMs = DefaultDoubleCtrlIntervalMs
 	}
 	if c.Search.MaxResults <= 0 {
 		c.Search.MaxResults = 80

@@ -54,8 +54,11 @@ type settingsWindow struct {
 	maxResults float64
 	// thumbnails 决定图片/视频显示内容缩略图还是线框图标。
 	thumbnails bool
-	// iconScale 是图标的倍数（1 = 100%）。界面给几个台阶，也能手输。
+	// iconScale 是图标的倍数（1 = 100%），也是落盘的那个值。界面给几个台阶。
 	iconScale float64
+	// iconPx 是"自定义"输入框里的像素数（100% 缩放下 22 就是 100%）：
+	// 用户填的是像素，存下去的还是 iconScale 折算出来的倍数。
+	iconPx float64
 	// iconPreset 是下拉里当前选中的那一项（某个台阶标签，或「自定义」）。
 	// 单独记一份，是为了让"选了自定义"这个状态活过每一帧重绘。
 	iconPreset string
@@ -186,6 +189,7 @@ func (s *settingsWindow) load() {
 	s.thumbnails = cfg.ThumbnailsOn()
 	s.iconScale = iconScaleOf(cfg, s.app.scale)
 	s.iconPreset = iconPresetLabel(s.iconScale)
+	s.iconPx = s.iconBasePx() * s.iconScale
 
 	s.roots = strings.Join(cfg.Index.Roots, "\n")
 	s.excludes = strings.Join(cfg.Index.Excludes, "\n")
@@ -467,26 +471,6 @@ func (s *settingsWindow) rankSection(c *ui.Context, t *ui.Theme) {
 			ui.Text(c, "最多显示结果数").FontSize(12).TextColor(t.TextMuted).Width(150)
 			ui.NumberInput(c, &s.maxResults, 10, 500, 10).Width(120)
 		})
-		iconLabels := iconScaleLabels()
-		iconSel := s.iconPreset
-		ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "图标大小").FontSize(12).TextColor(t.TextMuted).Width(150)
-			ui.Select(c, &iconSel, iconLabels).Width(130)
-			if iconSel == iconCustomLabel {
-				ui.NumberInput(c, &s.iconScale, config.MinIconScale, config.MaxIconScale, 0.05).Width(90)
-				ui.Text(c, "倍").FontSize(12).TextColor(t.TextMuted)
-			}
-			ui.Text(c, s.iconPreview()).FontSize(11).TextColor(t.TextMuted)
-		})
-		// 台阶 + 自定义：选台阶直接落到那个倍数，选「自定义」才露出输入框。
-		// 选择本身记在 s.iconPreset 里——否则手输一个不在台阶上的值之后，
-		// 下拉会自己跳回最近的台阶，输入框跟着消失。
-		if iconSel != s.iconPreset {
-			s.iconPreset = iconSel
-			if v, ok := iconPresetValue(iconSel); ok {
-				s.iconScale = v
-			}
-		}
 		ui.Checkbox(c, &s.thumbnails, "图片、视频、PDF 显示内容缩略图")
 	})
 }
@@ -921,16 +905,21 @@ func iconScaleOf(cfg *config.Config, sysScale float32) float64 {
 	return 1
 }
 
+// iconBasePx 是 100%（也就是"系统缩放下的默认大小"）在当前缩放下的像素数：
+// 100% 屏 22、125% 屏 27.5。台阶百分比和自定义像素都以它为基准换算。
+func (s *settingsWindow) iconBasePx() float64 {
+	scale := float64(s.app.scale)
+	if scale <= 0 {
+		scale = 1
+	}
+	return float64(config.BaseIconSize) * scale
+}
+
 // iconPreview 在"图标大小"旁边说清现在到底会画多大：只给实际像素。
 // 不再带箭头、也不再报系统缩放比例 —— 那是环境参数，用户改不了它，
 // 摆在设置页里只会让人以为它是个可调的东西。
 func (s *settingsWindow) iconPreview() string {
-	scale := s.app.scale
-	if scale <= 0 {
-		scale = 1
-	}
-	base := float64(config.BaseIconSize) * float64(scale)
-	return fmt.Sprintf("%.1f 像素", base*config.ClampIconScale(s.iconScale))
+	return fmt.Sprintf("%.1f 像素", s.iconBasePx()*config.ClampIconScale(s.iconScale))
 }
 
 func sliderRow(c *ui.Context, t *ui.Theme, label string, value *float64) {
@@ -954,6 +943,43 @@ func (s *settingsWindow) appearanceSection(c *ui.Context, t *ui.Theme) {
 			toggleRow(c, t, &s.opacityOn, "透明度")
 			toggleRow(c, t, &s.shadowOn, "投影")
 		})
+		// 图标大小也归这里：它改的是"面板长什么样"，不是"搜什么、怎么排"。
+		s.iconSizeRow(c, t)
+	})
+}
+
+// iconSizeRow 是"图标大小"这一行：下拉给几个台阶，选「自定义」时直接填像素。
+//
+// 台阶仍按倍数存（75% = 系统默认大小的 0.75 倍）：默认大小本身随系统缩放变
+// （125% 屏上是 27.5），所以百分比才是稳的那个刻度。自定义输入框反过来只用
+// 像素 —— 用户盯着面板上的图标，能说出口的只有"28 像素"，不是"1.27 倍"。
+// 换算在这一行做完，配置里存的还是倍数。
+func (s *settingsWindow) iconSizeRow(c *ui.Context, t *ui.Theme) {
+	base := s.iconBasePx()
+	sel := s.iconPreset
+	ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
+		ui.Text(c, "图标大小").FontSize(12).TextColor(t.TextMuted).Width(150)
+		ui.Select(c, &sel, iconScaleLabels()).Width(130)
+		// 选台阶直接落到那个倍数；选「自定义」才露出像素输入框。
+		// 选择本身记在 s.iconPreset 里 —— 否则手输一个不在台阶上的值之后，
+		// 下拉会自己跳回最近的台阶，输入框跟着消失。
+		if sel != s.iconPreset {
+			s.iconPreset = sel
+			if v, ok := iconPresetValue(sel); ok {
+				s.iconScale = v
+				s.iconPx = base * v
+			} else {
+				// 进自定义时把当前大小换成像素摆进输入框，别留一个上次的数。
+				s.iconPx = base * config.ClampIconScale(s.iconScale)
+			}
+		}
+		if sel == iconCustomLabel {
+			ui.NumberInput(c, &s.iconPx,
+				math.Round(base*config.MinIconScale), math.Round(base*config.MaxIconScale), 1).Width(90)
+			ui.Text(c, "像素").FontSize(12).TextColor(t.TextMuted)
+			s.iconScale = config.ClampIconScale(s.iconPx / base)
+		}
+		ui.Text(c, s.iconPreview()).FontSize(11).TextColor(t.TextMuted)
 	})
 }
 
@@ -1007,6 +1033,11 @@ func (s *settingsWindow) save() {
 	cfg.Search.TypeOrder = splitList(s.typeOrder)
 	cfg.Search.MaxResults = int(s.maxResults)
 	cfg.Search.Thumbnails = boolPtr(s.thumbnails)
+	// 自定义像素只在保存这一刻再折一次：输入框里的数就是最后一眼看到的那个，
+	// 中间万一有哪一帧没走到，这里也不会把用户刚填的数丢掉。
+	if s.iconPreset == iconCustomLabel {
+		s.iconScale = config.ClampIconScale(s.iconPx / s.iconBasePx())
+	}
 	cfg.Search.IconScale = config.ClampIconScale(s.iconScale)
 	// 旧字段清零：两套值同时存在时没人说得清该信哪个。
 	cfg.Search.IconSize = 0

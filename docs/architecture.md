@@ -33,7 +33,7 @@ Baozi 暂时不做提权钩子：双击 Ctrl 只需要读按键，普通权限�
 
 ```
 Ctrl↓ Ctrl↑                    → armed = true，记录 lastCtrlUp
-Ctrl↓ 且 now-lastCtrlUp ≤ 400ms → 触发 toggle，armed = false
+Ctrl↓ 且 now-lastCtrlUp ≤ 200ms → 触发 toggle，armed = false
 中间出现任何非修饰键按下         → armed = false（避免 Ctrl+C 被误判）
 ```
 
@@ -1188,8 +1188,9 @@ CPU。删 4000 个文件时变化连续涌来，于是出现「重建 15 秒 →
 |---|---|---|
 | 常规·唤出 | 开关、`NumberInput`（间隔）、`TextInput`（备用组合键）、开关（全屏抑制） | `hotkey.*` |
 
+| 常规·界面外观 | 三个 `Checkbox`（圆角 / 透明度 / 投影）、`Select` + `NumberInput`（图标大小：台阶百分比 / 自定义像素） | `appearance.*` / `search.iconScale` |
 | 常规·文件对话框跟随 | 开关（总）、两行 `Checkbox`（七种目录来源：资源管理器 / Total Commander / Directory Opus / XYplorer / xplorer2 / tessoa / Arke） | `dialogFollow` / `pathSources.*` |
-| 常规·排序 | 三条 `Slider`（频次/类型/准确性）、`TextArea`（类型优先级，每行一个扩展名）、`NumberInput`（最多结果）、`Select` + `NumberInput`（图标大小：台阶/自定义倍数）、`Checkbox`（图片/视频缩略图） | `search.weights` / `typeOrder` / `maxResults` / `search.iconScale` / `search.thumbnails` |
+| 常规·排序 | 三条 `Slider`（频次/类型/准确性）、`TextArea`（类型优先级，每行一个扩展名）、`NumberInput`（最多结果）、`checkbox`（图片/视频缩略图） | `search.weights` / `typeOrder` / `maxResults` / `search.thumbnails` |
 | 常规·索引 | 两个 `TextArea`（根目录、排除目录，每行一条）、开关（隐藏）、`NumberInput`（重建间隔）、按钮（立即重建） | `index.*` |
 | 自定义命令 | 左列 `ui.List`（每条两行：显示名 + 全部激活词）＋ 新建/删除；右列表单：`TextInput`×3（激活词 / 显示名 / 程序）、`TextArea`（参数，一行一个）、`TextInput`（工作目录）、`Checkbox`（执行后不收起）、「将执行：」实时预览 | `commands`（结构化，不再是竖线文本） |
 
@@ -1371,7 +1372,14 @@ CPU。删 4000 个文件时变化连续涌来，于是出现「重建 15 秒 →
 - `search.iconScale` 是倍数（1 = 100%），`IconSizeAt` 算 `BaseIconSize × 系统缩放 × 倍数`。
   于是 100% 在任何屏上都是"这块屏的默认样子"，125% 屏上是 27.5、150% 是 33；
 - 倍数夹在 `MinIconScale = 0.5` ~ `MaxIconScale = 3`：再小认不出图标，再大格子撑爆面板；
-- 设置页给 75/100/125/150/175/200% 六个台阶，选「自定义」才露出手输框（步进 0.05）；
+- 设置页在**「界面外观」**里给这一项（它改的是面板长什么样，不是搜什么、怎么排）；
+  下拉给 75/100/125/150/175/200% 六个台阶，选「自定义」才露出手输框；
+- **自定义那格填的是像素，不是倍数**（用户的原话："自定义直接改为设置px大小"）。
+  台阶按百分比留着，因为"默认多大"本身随系统缩放走，只有百分比是稳的刻度；而自定义
+  反过来只认像素 —— 用户盯着面板上的图标，能说出口的是"33 像素"，不是"1.2 倍"。
+  输入框的上下限就是 `BaseIconSize × 系统缩放 × 0.5 ~ 3`（125% 屏上是 13.75 ~ 82.5），
+  填进去的数当场折成倍数（`iconScale = 像素 ÷ 基准`），落盘的仍是 `iconScale`。
+  旁边那行灰色读数（`iconPreview`）跟输入框是同一个数，所以填 33 就显示 33.0 像素；
 - **老配置兼容**：`search.iconSize`（像素）字段留着，`IconSizeAt` 的优先级是
   `iconScale → iconSize → 跟随系统缩放`。老用户升级时看到的尺寸不会跳一下；
   一旦在设置页保存过，就写 `iconScale` 并把 `iconSize` 清零（两套值同时存在没人说得清信哪个）。

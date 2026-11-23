@@ -73,7 +73,7 @@ type MSG struct {
 }
 
 var (
-	interval          = 400 * time.Millisecond
+	interval          = config.DefaultDoubleCtrlIntervalMs * time.Millisecond
 	disableFullscreen = true
 
 	lastCtrlUp time.Time
@@ -105,7 +105,7 @@ func isCtrl(vk uint32) bool {
 // onKey 是双击 Ctrl 的状态机。
 //
 //	Ctrl↓ Ctrl↑            → armed（等待第二次）
-//	Ctrl↓（400ms 内）       → 触发
+//	Ctrl↓（200ms 内）       → 触发
 //	中间按过任何非修饰键     → 作废，避免 Ctrl+C 被当成唤出
 func onKey(msg uint32, vk uint32) {
 	down := msg == wmKeyDown || msg == wmSysKeyDown

@@ -153,6 +153,51 @@ func TestIconScalePresets(t *testing.T) {
 	}
 }
 
+// 「自定义」填的是像素：27.5 的基准下填 33，折成 1.2 倍存下去，
+// 再打开设置要能原样回到 33 像素。两头只要有一头错，用户填的数就会跳。
+func TestIconPxCustom(t *testing.T) {
+	a := testApp(t)
+	a.scale = 1.25 // 125% 屏：默认大小 27.5 像素
+	s := &settingsWindow{app: a}
+	s.load()
+	if got := s.iconBasePx(); got != 27.5 {
+		t.Fatalf("125%% 缩放下的默认大小应是 27.5，实际 %v", got)
+	}
+	s.iconPx = 33
+	s.iconScale = config.ClampIconScale(s.iconPx / s.iconBasePx())
+	if got := s.iconPreview(); got != "33.0 像素" {
+		t.Fatalf("填 33 像素时预览应显示 33.0 像素，实际 %q", got)
+	}
+
+	// 存盘后重新打开：像素数要回来，下拉也要认得这不是任何一个台阶。
+	a.cfg.Search.IconScale = s.iconScale
+	a.cfg.Search.IconSize = 0
+	s2 := &settingsWindow{app: a}
+	s2.load()
+	if got := s2.iconPreview(); got != "33.0 像素" {
+		t.Fatalf("重新打开设置后应还是 33.0 像素，实际 %q", got)
+	}
+	if s2.iconPreset != iconCustomLabel {
+		t.Fatalf("33 像素不在任何台阶上，应当归自定义，实际 %q", s2.iconPreset)
+	}
+}
+
+// 「自定义」那一档：下拉停在自定义时才露出像素输入框，旁边读数跟着它走。
+func TestSettingsIconCustomShowsPx(t *testing.T) {
+	a := testApp(t)
+	s := &settingsWindow{app: a}
+	s.load()
+	s.iconPreset = iconCustomLabel
+	s.iconPx = 30
+	s.iconScale = config.ClampIconScale(s.iconPx / s.iconBasePx())
+	tester := ui.NewTester(s.view, 880, 900)
+	tester.Frame()
+	if !tester.HasText("30.0 像素") {
+		t.Fatal("自定义像素那一档没有把 30 像素摆出来")
+	}
+	dumpPreview(t, tester)
+}
+
 // 图标改成倍数之后，放大必须真的连锁到布局：卡片变宽、同一块面板一排能放的卡变少。
 // 只改数字不动布局，就等于"设置里调了没用"。
 func TestIconScaleWidensCards(t *testing.T) {

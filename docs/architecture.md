@@ -1188,7 +1188,7 @@ CPU。删 4000 个文件时变化连续涌来，于是出现「重建 15 秒 →
 |---|---|---|
 | 常规·唤出 | 开关、`NumberInput`（间隔）、`TextInput`（备用组合键）、开关（全屏抑制） | `hotkey.*` |
 
-| 常规·界面外观 | 三个 `Checkbox`（圆角 / 透明度 / 投影）、`Select` + `NumberInput`（图标大小：台阶百分比 / 自定义像素） | `appearance.*` / `search.iconScale` |
+| 常规·界面外观 | 三个 `Checkbox`（圆角 / 透明度 / 投影）、`Select` + `Slider`（图标大小：台阶百分比 / 自定义像素滑杆） | `appearance.*` / `search.iconScale` |
 | 常规·文件对话框跟随 | 开关（总）、两行 `Checkbox`（七种目录来源：资源管理器 / Total Commander / Directory Opus / XYplorer / xplorer2 / tessoa / Arke） | `dialogFollow` / `pathSources.*` |
 | 常规·排序 | 三条 `Slider`（频次/类型/准确性）、`TextArea`（类型优先级，每行一个扩展名）、`NumberInput`（最多结果）、`checkbox`（图片/视频缩略图） | `search.weights` / `typeOrder` / `maxResults` / `search.thumbnails` |
 | 常规·索引 | 两个 `TextArea`（根目录、排除目录，每行一条）、开关（隐藏）、`NumberInput`（重建间隔）、按钮（立即重建） | `index.*` |
@@ -1374,12 +1374,13 @@ CPU。删 4000 个文件时变化连续涌来，于是出现「重建 15 秒 →
 - 倍数夹在 `MinIconScale = 0.5` ~ `MaxIconScale = 3`：再小认不出图标，再大格子撑爆面板；
 - 设置页在**「界面外观」**里给这一项（它改的是面板长什么样，不是搜什么、怎么排）；
   下拉给 75/100/125/150/175/200% 六个台阶，选「自定义」才露出手输框；
-- **自定义那格填的是像素，不是倍数**（用户的原话："自定义直接改为设置px大小"）。
+- **自定义那一档调的是像素，不是倍数**（用户的原话："自定义直接改为设置px大小"）。
   台阶按百分比留着，因为"默认多大"本身随系统缩放走，只有百分比是稳的刻度；而自定义
   反过来只认像素 —— 用户盯着面板上的图标，能说出口的是"33 像素"，不是"1.2 倍"。
-  输入框的上下限就是 `BaseIconSize × 系统缩放 × 0.5 ~ 3`（125% 屏上是 13.75 ~ 82.5），
-  填进去的数当场折成倍数（`iconScale = 像素 ÷ 基准`），落盘的仍是 `iconScale`。
-  旁边那行灰色读数（`iconPreview`）跟输入框是同一个数，所以填 33 就显示 33.0 像素；
+  这一档给一条**滑杆**（原来是个 90 宽的 `NumberInput`，输入框、减号、加号挤成一团、
+  数字还会随焦点在框里飘，用户说"不伦不类"）。滑杆两头是 `BaseIconSize × 系统缩放 ×
+  0.5 ~ 3`（125% 屏上是 13.75 ~ 82.5），拖动按整数像素落，右边的读数就是那个数；
+  折算成倍数（`iconScale = 像素 ÷ 基准`）后落盘的仍是 `iconScale`；
 - **老配置兼容**：`search.iconSize`（像素）字段留着，`IconSizeAt` 的优先级是
   `iconScale → iconSize → 跟随系统缩放`。老用户升级时看到的尺寸不会跳一下；
   一旦在设置页保存过，就写 `iconScale` 并把 `iconSize` 清零（两套值同时存在没人说得清信哪个）。

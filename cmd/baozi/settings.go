@@ -948,17 +948,19 @@ func (s *settingsWindow) appearanceSection(c *ui.Context, t *ui.Theme) {
 	})
 }
 
-// iconSizeRow 是"图标大小"这一行：下拉给几个台阶，选「自定义」时直接填像素。
+// iconSizeRow 是"图标大小"这一行：下拉给几个台阶，选「自定义」时用滑杆调像素。
 //
 // 台阶仍按倍数存（75% = 系统默认大小的 0.75 倍）：默认大小本身随系统缩放变
-// （125% 屏上是 27.5），所以百分比才是稳的那个刻度。自定义输入框反过来只用
+// （125% 屏上是 27.5），所以百分比才是稳的那个刻度。自定义那一档反过来只用
 // 像素 —— 用户盯着面板上的图标，能说出口的只有"28 像素"，不是"1.27 倍"。
-// 换算在这一行做完，配置里存的还是倍数。
+// 滑杆两头就是 0.5~3 倍折算出来的像素数，换算在这一行做完，配置里存的还是倍数。
 func (s *settingsWindow) iconSizeRow(c *ui.Context, t *ui.Theme) {
 	base := s.iconBasePx()
 	sel := s.iconPreset
 	ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, "图标大小").FontSize(12).TextColor(t.TextMuted).Width(150)
+		// 标签只占 110：这一行还要塞下拉、滑杆和读数，跟「排序」那种 150/230 的
+		// 宽标签对齐没意义 —— 挤到边上读数就会被窗口裁掉。
+		ui.Text(c, "图标大小").FontSize(12).TextColor(t.TextMuted).Width(110)
 		ui.Select(c, &sel, iconScaleLabels()).Width(130)
 		// 选台阶直接落到那个倍数；选「自定义」才露出像素输入框。
 		// 选择本身记在 s.iconPreset 里 —— 否则手输一个不在台阶上的值之后，
@@ -974,12 +976,19 @@ func (s *settingsWindow) iconSizeRow(c *ui.Context, t *ui.Theme) {
 			}
 		}
 		if sel == iconCustomLabel {
-			ui.NumberInput(c, &s.iconPx,
-				math.Round(base*config.MinIconScale), math.Round(base*config.MaxIconScale), 1).Width(90)
-			ui.Text(c, "像素").FontSize(12).TextColor(t.TextMuted)
+			// 「自定义」给一条滑杆：左右拖动改像素，右边的数跟着走。
+			// 这里原来是个 NumberInput，90 宽塞不下"输入框 + 减 + 加"，数字还会
+			// 随焦点在框里飘（用户原话："不伦不类"）—— 一行里要能调又要能看，
+			// 滑杆比三个挤在一起的控件清楚得多。
+			lo, hi := math.Round(base*config.MinIconScale), math.Round(base*config.MaxIconScale)
+			ui.Slider(c, &s.iconPx, lo, hi).Grow(1)
+			// 像素是整数：拖动时按整数落，别让 29.999 这种数流进配置和读数。
+			s.iconPx = math.Round(s.iconPx)
 			s.iconScale = config.ClampIconScale(s.iconPx / base)
+			ui.Text(c, fmt.Sprintf("%.0f 像素", s.iconPx)).FontSize(12).Width(72)
+		} else {
+			ui.Text(c, s.iconPreview()).FontSize(11).TextColor(t.TextMuted)
 		}
-		ui.Text(c, s.iconPreview()).FontSize(11).TextColor(t.TextMuted)
 	})
 }
 

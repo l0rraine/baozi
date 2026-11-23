@@ -182,7 +182,7 @@ func TestIconPxCustom(t *testing.T) {
 	}
 }
 
-// 「自定义」那一档：下拉停在自定义时才露出像素输入框，旁边读数跟着它走。
+// 「自定义」那一档：下拉停在自定义时才露出滑杆，右边的像素读数跟着它走。
 func TestSettingsIconCustomShowsPx(t *testing.T) {
 	a := testApp(t)
 	s := &settingsWindow{app: a}
@@ -192,8 +192,8 @@ func TestSettingsIconCustomShowsPx(t *testing.T) {
 	s.iconScale = config.ClampIconScale(s.iconPx / s.iconBasePx())
 	tester := ui.NewTester(s.view, 880, 900)
 	tester.Frame()
-	if !tester.HasText("30.0 像素") {
-		t.Fatal("自定义像素那一档没有把 30 像素摆出来")
+	if !tester.HasText("30 像素") {
+		t.Fatal("自定义那一档没有把 30 像素摆出来")
 	}
 	dumpPreview(t, tester)
 }

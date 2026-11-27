@@ -266,6 +266,11 @@ func (d *selfDrag) subclassProc(hwnd, msg, wp, lp, id, ref uintptr) uintptr {
 		if hit {
 			d.pending = false
 		}
+		// 滚动条同理：按在结果列表的竖条上，这次按住属于 mygo 的滚动条拖动，
+		// 不能顺手把面板也拖走（用户报的就是"拖滚动条时整个窗口跟着动"）。
+		if d.app.scrollBarPressHit(float32(pt.X)/scale, float32(pt.Y)/scale) {
+			d.pending = false
+		}
 		// 照旧转发：图标/搜索框/按钮的按下态、聚焦都要走 mygo 那一套。
 		return d.call(hwnd, msg, wp, lp)
 

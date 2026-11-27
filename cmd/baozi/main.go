@@ -312,8 +312,9 @@ type application struct {
 	// 正则模式下只做精确匹配 —— 不走拼音、不走模糊子序列、不做准确度分档。
 	// 不落盘：这是这次打开面板期间的一个模式，重启回到普通搜索。
 	regexOn bool
-	// regexErr 是上一次正则的语法错误，显示在结果区上方（空表示没问题）。
-	regexErr string
+	// patternErr 是上一次"模式型查询"（正则或通配符）编译失败的原因，
+	// 显示在结果区里（空表示没问题）。两种模式共用一格：同一时刻只会走其中一条。
+	patternErr string
 
 	// quitting 为 true 表示正在真正退出：窗口的 OnClose 不再拦关闭。
 	// mygo 的 Quit 是逐个关窗口，任何窗口 PreventDefault 都会让整个 Quit 作废。
@@ -363,6 +364,15 @@ type application struct {
 	// 避免把卡片拖动抢成窗口拖动。Element 跨帧会失效，所以用 Handle 读矩形。
 	pinHandles map[int]*ui.Handle
 	pinRects   []ui.Rect
+
+	// listBar 是结果列表那条竖滚动条的**可按下区域**（上一帧提交的矩形）。
+	// 和固定卡是同一个道理：窗口拖动在 MyGoSurface 上子类化，比 UI 先拿到鼠标，
+	// 按在滚动条上拖时会被它当成"拖面板"，滚动条一步都动不了。按下那一点先问
+	// 这里，命中就让开，把按下原样交给 mygo 的 scrollbarPress。
+	//
+	// 只有一条：主面板里会滚的只有一个结果列表。设置/互传子窗的拖动只接管顶栏，
+	// 内容区的滚动条本来就不冲突。
+	listBar ui.Rect
 
 	// hoverPoint 是上一帧指针在窗口里的位置。悬停选中只在它**变了**的时候接管，
 	// 否则鼠标停在某张卡上不动、用户按方向键，选中会被 hover 每帧拽回去。
@@ -540,6 +550,43 @@ func (a *application) pinPressHit(x, y float32) bool {
 	return false
 }
 
+// scrollBarPressHit 判断窗口客户区坐标是否落在结果列表的滚动条上。
+//
+// 同一个毛病、同一个解法：滚动条的拖动是 mygo 自己在做（scrollbarPress 拿住
+// 拇指、按指针位置换算偏移），但窗口拖动比它先收到 WM_MOUSEMOVE，
+// 位移一过阈值就把这次按住改判成"拖面板" —— 用户看到的就是"想滚列表，
+// 整个窗口跟着走了"。命中这条竖条就把 d.pending 清掉，按下和移动原样转发。
+func (a *application) scrollBarPressHit(x, y float32) bool {
+	b := a.listBar
+	if b.W <= 0 || b.H <= 0 {
+		return false
+	}
+	return x >= b.X && x < b.X+b.W && y >= b.Y && y < b.Y+b.H
+}
+
+// defaultScrollbarWidth 是 mygo 没设 Theme.ScrollbarWidth 时的默认拇指宽度（6 DIP），
+// 取自 ui/theme.go 的 scrollbarWidth()。面板不显式设这一项，所以就是 6。
+const defaultScrollbarWidth = 6
+
+// listBarStrip 返回滚动容器 box 的**竖滚动条可按下区域**。
+// mygo（paint.go 的 scrollBars）里竖条贴着容器右边缘，宽 ScrollbarWidth，
+// 而可接按下的轨道比它再宽 6 DIP（左右各 3，给"按下时变粗"留位置），
+// 所以这里取 width+6 一整条。box 为空（列表还没提交过一帧）就返回零矩形。
+func listBarStrip(box ui.Rect, t *ui.Theme) ui.Rect {
+	if box.W <= 0 || box.H <= 0 || t == nil {
+		return ui.Rect{}
+	}
+	w := t.ScrollbarWidth
+	if w <= 0 {
+		w = defaultScrollbarWidth
+	}
+	track := w + 6
+	if track > box.W {
+		track = box.W
+	}
+	return ui.Rect{X: box.X + box.W - track, Y: box.Y, W: track, H: box.H}
+}
+
 // pinHandle 取某张固定卡片跨帧复用的 Handle：卡片每帧重建，
 // 但 Handle 能读到上一帧提交后的矩形。
 func (a *application) pinHandle(i int) *ui.Handle {
@@ -688,6 +735,9 @@ func (a *application) view(c *ui.Context) {
 	// 拖到哪、松手后位置记进配置（见 panelGeometryChanged），下次唤出照旧复现。
 	// 面板本来就没有标题栏（TitleBarHidden），没有这条就完全拿不动它。
 	body := func() {
+		// 列表页才有结果列表，所以滚动条的按下区域每帧从零开始：首页那几条
+		// 卡片路径上没有列表，留着上一帧的矩形会把空白处的按下误判成"按在滚动条上"。
+		a.listBar = ui.Rect{}
 		// 固定卡矩形只在本帧有效：首页重建时重新收集，搜索/列表页则清空，
 		// 免得旧卡片的坐标把列表页上的按下误判成固定卡。
 		a.pinRects = a.pinRects[:0]
@@ -925,7 +975,7 @@ func (a *application) regexButton(c *ui.Context) {
 		return
 	}
 	a.regexOn = !a.regexOn
-	a.regexErr = ""
+	a.patternErr = ""
 	if a.regexOn {
 		a.setStatus("正则模式：只精确匹配文件名")
 	} else {
@@ -1193,11 +1243,15 @@ func (a *application) resultList(c *ui.Context) {
 	list := ui.List(c, &a.list, len(a.results), func(i int) { a.row(c, i) }).Grow(1).Padding(8).Children(func() {
 		if len(a.results) == 0 {
 			switch {
-			case a.regexOn && a.regexErr != "":
+			case a.regexOn && a.patternErr != "":
 				// 正则写错了要指出来，否则"搜不到"像是功能没生效
-				ui.Text(c, "正则无效："+a.regexErr).TextColor(t.TextMuted).Padding(18)
+				ui.Text(c, "正则无效："+a.patternErr).TextColor(t.TextMuted).Padding(18)
 			case a.regexOn:
 				ui.Text(c, "没有文件名命中这个正则").TextColor(t.TextMuted).Padding(18)
+			case search.HasGlob(a.query) && a.patternErr != "":
+				ui.Text(c, "通配模式无效："+a.patternErr).TextColor(t.TextMuted).Padding(18)
+			case search.HasGlob(a.query):
+				ui.Text(c, "没有文件名匹配这个通配模式").TextColor(t.TextMuted).Padding(18)
 			default:
 				ui.Text(c, "没有匹配项").TextColor(t.TextMuted).Padding(18)
 			}
@@ -1206,6 +1260,9 @@ func (a *application) resultList(c *ui.Context) {
 	if list.Submitted() {
 		a.open()
 	}
+	// 竖滚动条的按下区域记下来给窗口拖动用（见 scrollBarPressHit）。
+	// 读的是**上一帧提交后**的矩形：和固定卡一样，这一帧刚建的 Element 还没有坐标。
+	a.listBar = listBarStrip(a.list.Bounds(c), c.Theme())
 }
 
 // footer 是底栏：左边说选中项会做什么，右边用键帽写清 Enter / Ctrl+Enter / Ctrl+K。
@@ -1699,6 +1756,12 @@ func (a *application) searchAll(q string) []search.Result {
 	if a.regexOn {
 		return a.searchRegex(q)
 	}
+	// 通配符也走"模式"那条路：`*.pdf` 里的 `*` 在模糊模式里是普通字符，
+	// 子串预筛会要求文件名里真有一个星号，结果一条候选都进不来（用户看到的就是
+	// "搜不到"）。见 search.HasGlob 的口径：只有 `*`/`?` 才改道。
+	if search.HasGlob(q) {
+		return a.searchGlob(q)
+	}
 	lowQ := strings.ToLower(q)
 	tokens := strings.Fields(lowQ)
 	weights := search.Weights(a.cfg.Search.Weights)
@@ -1826,13 +1889,34 @@ const maxRegexHits = 20000
 // 正则里的反斜杠到处都是（`\.log$`），那个判断在这里不成立；想按路径找就自己写
 // 目录部分的模式。代价是路径匹配（PathOf 顺父链还原，很贵）在这条路上完全不发生。
 func (a *application) searchRegex(q string) []search.Result {
-	rx, err := search.CompileRegex(q)
+	return a.searchPattern(q, false)
+}
+
+// searchGlob 是通配符模式的搜索：`*.pdf` 这类输入。翻译成正则后与正则模式
+// **共用同一条路径**（同一套预筛、同一套收集上限、同样按频次与类型排序），
+// 差别只在"模式从哪来"。见 internal/search/glob.go。
+func (a *application) searchGlob(q string) []search.Result {
+	return a.searchPattern(q, true)
+}
+
+// searchPattern 是两条"模式型查询"共用的一段：编译模式 → 命令/应用/索引逐个 Match。
+// glob 为 true 时编译通配符，否则编译 Go 正则。
+func (a *application) searchPattern(q string, glob bool) []search.Result {
+	var (
+		rx  *search.Regex
+		err error
+	)
+	if glob {
+		rx, err = search.CompileGlob(q)
+	} else {
+		rx, err = search.CompileRegex(q)
+	}
 	if err != nil {
-		// 语法错误必须显式说：否则用户看到空结果会以为"正则没生效"。
-		a.setRegexErr(q, err.Error())
+		// 语法错误必须显式说：否则用户看到空结果会以为"模式没生效"。
+		a.setPatternErr(q, err.Error())
 		return nil
 	}
-	a.setRegexErr(q, "")
+	a.setPatternErr(q, "")
 
 	weights := search.Weights(a.cfg.Search.Weights)
 	acc := search.RegexAccuracy
@@ -1929,16 +2013,16 @@ func (a *application) searchRegex(q string) []search.Result {
 	return a.finish(results)
 }
 
-// setRegexErr 记住（或清空）上一次正则的语法错误。
+// setPatternErr 记住（或清空）上一次"模式型查询"的编译错误。
 // 和 refilter 一样校验查询没变：搜索在后台 goroutine 里跑，回来时用户可能已经改了输入。
-func (a *application) setRegexErr(q, msg string) {
+func (a *application) setPatternErr(q, msg string) {
 	if a.panel == nil {
-		a.regexErr = msg
+		a.patternErr = msg
 		return
 	}
 	a.panel.Update(func() {
 		if strings.TrimSpace(a.query) == q {
-			a.regexErr = msg
+			a.patternErr = msg
 		}
 	})
 }

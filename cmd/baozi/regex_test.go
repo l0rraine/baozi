@@ -95,7 +95,7 @@ func TestRegexInvalidPatternReportsError(t *testing.T) {
 	if got := a.searchAll("("); len(got) != 0 {
 		t.Fatalf("非法正则不该有结果，实际 %d 条", len(got))
 	}
-	if a.regexErr == "" {
+	if a.patternErr == "" {
 		t.Fatal("非法正则没有记录语法错误")
 	}
 

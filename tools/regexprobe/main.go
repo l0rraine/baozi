@@ -21,6 +21,11 @@ const maxRegexHits = 20000
 
 func main() {
 	pattern := `^.*\.log$`
+	glob := false
+	if len(os.Args) > 1 && os.Args[1] == "-glob" {
+		glob = true
+		os.Args = append(os.Args[:1], os.Args[2:]...)
+	}
 	if len(os.Args) > 1 {
 		pattern = os.Args[1]
 	}
@@ -38,9 +43,15 @@ func main() {
 	}
 	fmt.Printf("索引 %d 条，加载 %v\n", tab.Len(), time.Since(start).Round(time.Millisecond))
 
-	rx, err := search.CompileRegex(pattern)
+	var rx *search.Regex
+	if glob {
+		// 通配符模式：和 searchAll 走 searchGlob 时编译的是同一个东西
+		rx, err = search.CompileGlob(pattern)
+	} else {
+		rx, err = search.CompileRegex(pattern)
+	}
 	if err != nil {
-		fmt.Println("正则无效:", err)
+		fmt.Println("模式无效:", err)
 		os.Exit(1)
 	}
 
